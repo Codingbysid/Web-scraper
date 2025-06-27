@@ -1,0 +1,22 @@
+   name: Daily Scraper
+
+   on:
+     schedule:
+       - cron: '30 6 * * *'  # 12:00 PM India time (UTC+5:30)
+     workflow_dispatch:
+
+   jobs:
+     scrape:
+       runs-on: ubuntu-latest
+       steps:
+         - uses: actions/checkout@v2
+         - name: Set up Python
+           uses: actions/setup-python@v2
+           with:
+             python-version: '3.9'
+         - name: Install dependencies
+           run: pip install -r requirements.txt
+         - name: Write credentials.json
+           run: echo "${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}" > credentials.json
+         - name: Run scraper
+           run: python cloud_deploy.py
