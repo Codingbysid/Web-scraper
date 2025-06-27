@@ -16,8 +16,7 @@ import logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# --- Part 1: Google Sheets Authentication & Setup ---
-
+# --- Google Sheets Setup ---
 def setup_google_sheets_client():
     """
     Authenticates with Google Sheets API using service account credentials.
@@ -29,7 +28,7 @@ def setup_google_sheets_client():
         ]
         # For cloud deployment, credentials might be in environment variables
         if os.path.exists('credentials.json'):
-            client = gspread.service_account(filename='credentials.json', scopes=scopes)
+            client = gspread.service_account(filename='credentials.json', scopes=scopes)  # type: ignore
         else:
             # For cloud deployment, you might need to set credentials differently
             logger.error("credentials.json not found. Please ensure it's available.")
@@ -58,8 +57,7 @@ def get_or_create_worksheet(client, sheet_name, worksheet_name):
         worksheet = sheet.add_worksheet(title=worksheet_name, rows="1000", cols="20")
     return worksheet
 
-# --- Part 2: Web Scraping Functions ---
-
+# --- User-Agents for rotation ---
 USER_AGENTS = [
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/96.0.4664.110 Safari/537.36',
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/97.0.4692.71 Safari/537.36',
@@ -82,7 +80,7 @@ def get_soup(url):
         logger.error(f"Failed to retrieve page {url}. Error: {e}")
         return None
 
-# --- Scraper functions (same as your working scraper) ---
+# --- Scraper Functions ---
 def scrape_amazon_data(soup, url):
     if "api-services-support@amazon.com" in soup.text:
         logger.warning(f"Request blocked by Amazon for URL: {url}.")
@@ -137,10 +135,10 @@ def scrape_etsy_data(soup, url):
         except: return "In Stock"
     return {'name': get_title(soup), 'price': get_price(soup), 'brand': get_brand(soup), 'availability': get_availability(soup)}
 
-# --- Main execution function for cloud deployment ---
+# --- Main Execution ---
 def run_scraper():
     """Main function to run the scraper - can be called by cloud scheduler"""
-    logger.info("Starting cloud scraper...")
+    logger.info("Starting multi-retailer scraper...")
     
     GOOGLE_SHEET_NAME = "Retailer Data"
     WORKSHEET_NAME = "Sheet1"
@@ -163,8 +161,8 @@ def run_scraper():
 
     gspread_client = setup_google_sheets_client()
     if not gspread_client:
-        logger.error("Failed to setup Google Sheets client")
-        return False
+        logger.error("Google Sheets client setup failed.")
+        return
 
     worksheet = get_or_create_worksheet(gspread_client, GOOGLE_SHEET_NAME, WORKSHEET_NAME)
     all_products_data = []
@@ -192,15 +190,16 @@ def run_scraper():
             time.sleep(random.uniform(2.5, 4.5))
 
     if not all_products_data:
-        logger.warning("No data was scraped.")
-        return False
+        logger.warning("No data was scraped. Exiting.")
+        return
     
     df = pd.DataFrame(all_products_data)
     cols = ['timestamp', 'website', 'name', 'brand', 'price', 'availability', 'url']
     df = df.reindex(columns=cols)
     df.fillna('', inplace=True)
 
-    logger.info(f"Scraped {len(df)} products successfully")
+    logger.info("--- Scraped Data ---")
+    logger.info(df)
 
     is_sheet_empty = not worksheet.get_all_values()
     if is_sheet_empty:
@@ -210,7 +209,8 @@ def run_scraper():
         logger.info("Worksheet has data. Appending new rows...")
         worksheet.append_rows(df.values.tolist(), value_input_option='USER_ENTERED')
     
-    logger.info(f"Successfully wrote {len(df)} rows to Google Sheets")
+    logger.info(f"Successfully wrote {len(df)} rows to '{WORKSHEET_NAME}' in '{GOOGLE_SHEET_NAME}'.")
+    logger.info("Scraping completed!")
     return True
 
 # For local testing
