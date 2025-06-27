@@ -104,6 +104,418 @@ def get_or_create_worksheet(client, sheet_name, worksheet_name):
 # --- Scraping Functions (Amazon, eBay, Walmart, Target) ---
 # (Copy all scraping functions from scraper-manus.py here)
 # For brevity, only the main scrape_product_data function is shown, but you should copy all helpers as in scraper-manus.py
+# --- Part 2: Enhanced Scraping Functions ---
+
+# --- Amazon Scraping Functions ---
+def get_amazon_title(soup):
+    try:
+        title_element = soup.find("span", attrs={"id": "productTitle"})
+        if title_element:
+            return title_element.text.strip()
+        return ""
+    except AttributeError:
+        return ""
+
+def get_amazon_price(soup):
+    try:
+        # Check for the standard price first
+        price_whole = soup.find("span", attrs={'class': 'a-price-whole'}) 
+        price_fraction = soup.find("span", attrs={'class': 'a-price-fraction'}) 
+        if price_whole and price_fraction:
+            raw_price = price_whole.text + price_fraction.text
+            return clean_price(raw_price)
+        
+        # If the standard price isn't found, check for a deal price
+        deal_price = soup.find("span", attrs={"id": "priceblock_dealprice"}) 
+        if deal_price:
+            return clean_price(deal_price.text.strip())
+        
+        # Check for other price patterns
+        price_element = soup.find("span", class_="a-price-current")
+        if price_element:
+            return clean_price(price_element.text.strip())
+            
+        return ""
+    except AttributeError:
+        return ""
+
+def get_amazon_availability(soup):
+    try:
+        availability_div = soup.find("div", attrs={"id": "availability"}) 
+        if availability_div:
+            availability_text = availability_div.find("span")
+            if availability_text:
+                return availability_text.text.strip()
+        return "Not Available"
+    except AttributeError:
+        return "Not Available"
+
+def get_amazon_promo_flag(soup):
+    try:
+        # Check for deal price as promo indicator
+        if soup.find("span", attrs={'id': 'priceblock_dealprice'}):
+            return "Yes"
+        # Check for savings badge
+        if soup.find("span", class_="a-color-price"):
+            return "Yes"
+        return "No"
+    except AttributeError:
+        return "No"
+
+def scrape_amazon_product_data(soup, product_url):
+    """
+    Scrapes a single Amazon product page for the required details.
+    """
+    if not soup:
+        return None
+    
+    # Check if Amazon blocked the request
+    if "api-services-support@amazon.com" in soup.text:
+        logger.warning(f"Request blocked by Amazon for URL: {product_url}")
+        return None
+
+    return {
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'website_name': 'Amazon',
+        'name': get_amazon_title(soup),
+        'price': get_amazon_price(soup),
+        'availability': get_amazon_availability(soup),
+        'promo': get_amazon_promo_flag(soup),
+        'url': product_url
+    }
+
+# --- eBay Scraping Functions ---
+def get_ebay_title(soup):
+    try:
+        # Common selectors for eBay titles
+        title = soup.find("h1", class_="x-item-title__mainTitle")
+        if title:
+            return title.text.strip()
+        title = soup.find("h1", id="itemTitle") # Older selector
+        if title:
+            return title.text.strip().replace("Details about", "").strip()
+        return ""
+    except Exception:
+        return ""
+
+def get_ebay_price(soup):
+    try:
+        # Common selectors for eBay prices (Buy It Now)
+        price = soup.find("div", class_="x-price-primary")
+        if price:
+            price_span = price.find("span", class_="ux-textspans")
+            if price_span:
+                return clean_price(price_span.text.strip())
+        
+        # For auction prices or other formats
+        price = soup.find("span", id="prcIsum")
+        if price:
+            return clean_price(price.text.strip())
+        
+        price = soup.find("span", class_="notranslate") # Another common price class
+        if price:
+            return clean_price(price.text.strip())
+        return ""
+    except AttributeError:
+        return ""
+
+def get_ebay_availability(soup):
+    try:
+        # Check for "Sold" or "Out of stock" messages
+        sold_status = soup.find("span", class_="vi-qty-pur-txt")
+        if sold_status and "sold" in sold_status.text.lower():
+            return "Sold"
+        
+        quantity_input = soup.find("input", id="qtyTextBox")
+        if quantity_input and quantity_input.get('value') == '0':
+            return "Out of Stock"
+
+        # Check for "Quantity available"
+        qty_available = soup.find("span", id="qtySubTxt")
+        if qty_available:
+            return qty_available.text.strip()
+
+        return "In Stock" # Default if no specific message found
+    except AttributeError:
+        return "Unknown"
+
+def get_ebay_promo_flag(soup):
+    try:
+        # Look for "Best Offer" or "Sale" indicators
+        best_offer = soup.find("span", class_="vi-bbox-btn__text", string=re.compile(r"Best Offer"))
+        if best_offer:
+            return "Yes (Best Offer)"
+        
+        sale_price = soup.find("span", class_="vi-original-price") # Check for original price crossed out
+        if sale_price:
+            return "Yes (Sale)"
+        
+        return "No"
+    except AttributeError:
+        return "No"
+
+def scrape_ebay_product_data(soup, product_url):
+    """
+    Scrapes a single eBay product page for the required details.
+    """
+    if not soup:
+        return None
+
+    # eBay might block requests, check for common signs
+    if "Access Denied" in soup.text or "captcha" in soup.text.lower():
+        logger.warning(f"Request blocked by eBay for URL: {product_url}")
+        return None
+
+    return {
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'website_name': 'eBay',
+        'name': get_ebay_title(soup),
+        'price': get_ebay_price(soup),
+        'availability': get_ebay_availability(soup),
+        'promo': get_ebay_promo_flag(soup),
+        'url': product_url
+    }
+
+# --- Walmart Scraping Functions ---
+def get_walmart_title(soup):
+    try:
+        # Common selectors for Walmart titles
+        title = soup.find("h1", attrs={"itemprop": "name"})
+        if title:
+            return title.text.strip()
+        title = soup.find("h1", class_="product-title-text") # Another common title class
+        if title:
+            return title.text.strip()
+        return ""
+    except AttributeError:
+        return ""
+
+def get_walmart_price(soup):
+    try:
+        # Common selectors for Walmart prices
+        price = soup.find("span", attrs={"itemprop": "price"})
+        if price:
+            return clean_price(price.text.strip())
+        price = soup.find("span", class_="price-characteristic") # Another common price class
+        if price:
+            return clean_price(price.text.strip())
+        return ""
+    except AttributeError:
+        return ""
+
+def get_walmart_availability(soup):
+    try:
+        # Check for out of stock messages
+        out_of_stock = soup.find("div", class_="out-of-stock-message")
+        if out_of_stock:
+            return "Out of Stock"
+        
+        # Check for in stock messages or add to cart button
+        add_to_cart_button = soup.find("button", class_="add-to-cart-button")
+        if add_to_cart_button:
+            return "In Stock"
+        
+        return "Unknown"
+    except AttributeError:
+        return "Unknown"
+
+def get_walmart_promo_flag(soup):
+    try:
+        # Look for sale badges or discounted prices
+        promo_badge = soup.find("span", class_="price-badge-text")
+        if promo_badge and "sale" in promo_badge.text.lower():
+            return "Yes"
+        
+        # Check for original price crossed out
+        old_price = soup.find("span", class_="strike-through")
+        if old_price:
+            return "Yes"
+        
+        return "No"
+    except AttributeError:
+        return "No"
+
+def scrape_walmart_product_data(soup, product_url):
+    """
+    Scrapes a single Walmart product page for the required details.
+    """
+    if not soup:
+        return None
+
+    # Walmart might block requests, check for common signs
+    if "Access Denied" in soup.text or "captcha" in soup.text.lower():
+        logger.warning(f"Request blocked by Walmart for URL: {product_url}")
+        return None
+
+    return {
+        'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        'website_name': 'Walmart',
+        'name': get_walmart_title(soup),
+        'price': get_walmart_price(soup),
+        'availability': get_walmart_availability(soup),
+        'promo': get_walmart_promo_flag(soup),
+        'url': product_url
+    }
+
+# --- Enhanced Target Scraping Functions ---
+def get_target_title(soup):
+    try:
+        # Updated selectors based on current Target HTML structure
+        title = soup.find("h1", attrs={"data-test": "product-title"})
+        if title:
+            return title.text.strip()
+        
+        # Alternative title selectors
+        title = soup.find("h1", class_="styles__StyledHeading-sc-1fx9mxj-0")
+        if title:
+            return title.text.strip()
+            
+        # Look for any h1 with product-like content
+        title = soup.find("h1")
+        if title and len(title.text.strip()) > 5:  # Basic validation
+            return title.text.strip()
+            
+        return ""
+    except AttributeError:
+        return ""
+
+def get_target_price(soup):
+    try:
+        # Target often uses JavaScript to load prices dynamically
+        # Look for multiple possible price locations
+        
+        # Method 1: Look for spans with price-like text patterns
+        all_spans = soup.find_all("span")
+        price_spans = []
+        for span in all_spans:
+            if span.text and span.text.strip():
+                text = span.text.strip()
+                # Look for price patterns: $X.XX, $X, etc.
+                if re.search(r'\$\d+\.?\d*', text):
+                    price_spans.append(text)
+        
+        # If we found price-like spans, clean and return the first valid one
+        for price_text in price_spans:
+            cleaned = clean_price(price_text)
+            if cleaned and float(cleaned) > 0:
+                return cleaned
+        
+        # Method 2: Look for common Target price selectors
+        price_selectors = [
+            {"tag": "span", "class": re.compile(r"h-text-xl.*font-bold")},
+            {"tag": "div", "attrs": {"data-test": "product-price"}},
+            {"tag": "span", "class": "h-text-bs"},
+            {"tag": "span", "class": "price-current"},
+            {"tag": "span", "class": "sr-only"},
+        ]
+        
+        for selector in price_selectors:
+            if "class" in selector:
+                elements = soup.find_all(selector["tag"], class_=selector["class"])
+            elif "attrs" in selector:
+                elements = soup.find_all(selector["tag"], attrs=selector["attrs"])
+            else:
+                continue
+            
+            for element in elements:
+                if element.text and "$" in element.text:
+                    cleaned = clean_price(element.text.strip())
+                    if cleaned:
+                        return cleaned
+        
+        # Method 3: Look in script tags for JSON data (sometimes prices are in structured data)
+        scripts = soup.find_all("script", type="application/ld+json")
+        for script in scripts:
+            try:
+                import json
+                data = json.loads(script.string)
+                if isinstance(data, dict):
+                    # Look for price in structured data
+                    price = data.get("offers", {}).get("price") or data.get("price")
+                    if price:
+                        cleaned = clean_price(str(price))
+                        if cleaned:
+                            return cleaned
+            except (json.JSONDecodeError, AttributeError):
+                continue
+        
+        # Method 4: Look for price in meta tags
+        meta_price = soup.find("meta", attrs={"property": "product:price:amount"})
+        if meta_price and meta_price.get("content"):
+            cleaned = clean_price(meta_price.get("content"))
+            if cleaned:
+                return cleaned
+        
+        # Method 5: Check for price in any text content containing dollar signs
+        page_text = soup.get_text()
+        dollar_matches = re.findall(r'\$\d+\.?\d*', page_text)
+        for match in dollar_matches:
+            cleaned = clean_price(match)
+            if cleaned and 0.01 <= float(cleaned) <= 10000:  # Reasonable price range
+                return cleaned
+        
+        return ""
+    except (AttributeError, ValueError, ImportError):
+        return ""
+
+def get_target_availability(soup):
+    try:
+        # Check for out of stock messages
+        out_of_stock = soup.find("div", class_="styles__StyledAvailability-sc-1fx9mxj-0", 
+                                string=re.compile(r"Out of stock", re.IGNORECASE))
+        if out_of_stock:
+            return "Out of Stock"
+        
+        # Check for in stock messages or add to cart button
+        add_to_cart_button = soup.find("button", attrs={"data-test": "add-to-cart-button"})
+        if add_to_cart_button:
+            return "In Stock"
+        
+        # Look for availability text
+        availability_text = soup.find("div", class_="styles__StyledAvailability-sc-1fx9mxj-0")
+        if availability_text:
+            text = availability_text.text.strip().lower()
+            if "in stock" in text:
+                return "In Stock"
+            elif "out of stock" in text:
+                return "Out of Stock"
+            elif "limited stock" in text:
+                return "Limited Stock"
+
+        # Default to checking for presence of add to cart functionality
+        if soup.find("button", string=re.compile(r"Add to cart", re.IGNORECASE)):
+            return "In Stock"
+
+        return "Unknown"
+    except AttributeError:
+        return "Unknown"
+
+def get_target_promo_flag(soup):
+    try:
+        # Look for sale indicators in the price area
+        # Check for crossed-out regular price (indicates sale)
+        crossed_out_price = soup.find("span", class_="line-through")
+        if crossed_out_price:
+            return "Yes"
+        
+        # Look for "Sale" text
+        sale_text = soup.find("span", class_="text-red-600")
+        if sale_text and "sale" in sale_text.text.lower():
+            return "Yes"
+        
+        # Look for discount indicators
+        discount_indicators = soup.find_all("span", string=re.compile(r"save|off|%", re.IGNORECASE))
+        if discount_indicators:
+            return "Yes"
+        
+        # Check for multiple price elements (usually indicates sale vs regular price)
+        price_elements = soup.find_all("span", class_=re.compile(r"h-text-xl.*font-bold|text-gray-500"))
+        if len(price_elements) > 1:
+            return "Yes (Potential Sale)"
+        
+        return "No"
+    except AttributeError:
+        return "No"
 
 def scrape_product_data(product_url):
     logger.info(f"Fetching page for: {product_url}")
