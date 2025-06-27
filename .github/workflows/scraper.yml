@@ -19,4 +19,4 @@
          - name: Write credentials.json
            run: echo "${{ secrets.GOOGLE_SHEETS_CREDENTIALS }}" > credentials.json
          - name: Run scraper
-           run: python cloud_deploy.py
+           run: python scraper-manus.py
